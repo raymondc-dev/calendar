@@ -1,0 +1,653 @@
+package calendar.controller;
+
+import calendar.model.CalendarManager;
+import calendar.model.Event;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Enhanced controller supporting multiple calendars, timezones, and copy operations.
+ * Handles both single calendar operations and multi-calendar management.
+ */
+public class CalendarController {
+  private final CalendarManager manager;
+  private final DateTimeFormatter dateTimeFormatter =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm");
+  private final DateTimeFormatter dateFormatter =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+  /**
+   * Construct with a CalendarManager implementation.
+   *
+   * @param manager the CalendarManager to delegate to
+   */
+  public CalendarController(CalendarManager manager) {
+    this.manager = manager;
+  }
+
+  /**
+   * Parse a full-line command and execute it.
+   * Returns either a success message, query output, or a friendly error message.
+   *
+   * @param rawCommand the exact line the user typed
+   * @return a String to print back; if exactly "exit", the caller quits
+   */
+  public String handleCommand(String rawCommand) {
+    String trimmed = rawCommand.trim();
+    if (trimmed.isEmpty()) {
+      return "Empty command—please type something or 'exit' to quit.";
+    }
+
+    List<String> tokensList;
+    try {
+      tokensList = tokenize(trimmed);
+    } catch (IllegalArgumentException ex) {
+      return "Error parsing command: " + ex.getMessage();
+    }
+
+    if (tokensList.isEmpty()) {
+      return "Empty command—please type something or 'exit' to quit.";
+    }
+
+    String commandVerb = tokensList.get(0).toLowerCase();
+    try {
+      switch (commandVerb) {
+        case "create":
+          return parseCreate(tokensList);
+        case "edit":
+          return parseEdit(tokensList);
+        case "print":
+          return parsePrint(tokensList);
+        case "show":
+          return parseShow(tokensList);
+        case "use":
+          return parseUse(tokensList);
+        case "copy":
+          return parseCopy(tokensList);
+        case "exit":
+        case "quit":
+        case "q":
+          return "exit";
+        default:
+          return "Unknown command: \"" + tokensList.get(0)
+              + "\". Valid verbs: create, edit, print, show, exit.";
+      }
+    } catch (DateTimeParseException dtpex) {
+      return "Invalid date/time format. Use YYYY-MM-DD for dates or YYYY-MM-DDThh:mm "
+          + "for date-times.";
+    } catch (IllegalArgumentException iaex) {
+      return iaex.getMessage();
+    } catch (Exception ex) {
+      return "Unexpected error: " + ex.getMessage();
+    }
+  }
+
+  private String parseCreate(List<String> t) {
+    if (t.size() < 2) {
+      throw new IllegalArgumentException(
+          "Invalid create syntax. Expected: create event <subject> on|from <…>"
+      );
+    }
+
+    String target = t.get(1).toLowerCase();
+    if (target.equals("calendar")) {
+      return parseCreateCalendar(t);
+    } else if (target.equals("event")) {
+      return parseCreateEvent(t);
+    } else {
+      throw new IllegalArgumentException(
+          "Invalid create syntax. Expected: create event <subject> on|from <…>"
+      );
+    }
+  }
+
+  private String parseCreateCalendar(List<String> t) {
+    if (t.size() != 6 ||
+        !t.get(2).equals("--name") ||
+        !t.get(4).equals("--timezone")) {
+      throw new IllegalArgumentException(
+          "Invalid syntax. Expected: create calendar --name <name> --timezone <timezone>"
+      );
+    }
+
+    String name = t.get(3);
+    String timezone = t.get(5);
+
+    try {
+      manager.createCalendar(name, timezone);
+      return "Calendar created: " + name;
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Error creating calendar: " + e.getMessage());
+    }
+  }
+
+  private String parseCreateEvent(List<String> t) {
+    if (t.size() < 4) {
+      throw new IllegalArgumentException(
+          "Invalid create syntax. Expected: create event <subject> on|from …"
+      );
+    }
+    String subjectString = t.get(2);
+
+    // create event <subject> on <YYYY-MM-DD>
+    if (t.size() == 5 && t.get(3).equalsIgnoreCase("on")) {
+      LocalDate date = LocalDate.parse(t.get(4), dateFormatter);
+      LocalDateTime startDateTime = date.atTime(8, 0);
+      LocalDateTime endDateTime = date.atTime(17, 0);
+      manager.addEvent(subjectString, startDateTime, endDateTime,
+          null, null, "public");
+      return "Event created: " + subjectString;
+    }
+
+    // create event <subject> from <dt1> to <dt2>
+    if (t.size() == 7
+        && t.get(3).equalsIgnoreCase("from")
+        && t.get(5).equalsIgnoreCase("to")) {
+      LocalDateTime startDateTime = LocalDateTime.parse(
+          t.get(4), dateTimeFormatter);
+      LocalDateTime endDateTime = LocalDateTime.parse(
+          t.get(6), dateTimeFormatter);
+      manager.addEvent(subjectString, startDateTime, endDateTime,
+          null, null, "public");
+      return "Event created: " + subjectString;
+    }
+
+    // create event <subject> from <dt1> to <dt2> repeats <W> for <N>
+    if (t.size() >= 11
+        && t.get(3).equalsIgnoreCase("from")
+        && t.get(5).equalsIgnoreCase("to")
+        && t.get(7).equalsIgnoreCase("repeats")
+        && t.get(9).equalsIgnoreCase("for")) {
+      LocalDateTime firstStartDateTime = LocalDateTime.parse(
+          t.get(4), dateTimeFormatter);
+      LocalDateTime firstEndDateTime = LocalDateTime.parse(
+          t.get(6), dateTimeFormatter);
+      List<DayOfWeek> weekdayList = parseWeekdays(t.get(8));
+      int numberOfOccurrences = Integer.parseInt(t.get(10));
+      manager.addRecurringSeries(subjectString,
+          firstStartDateTime, firstEndDateTime,
+          weekdayList, numberOfOccurrences,
+          null, null, null, "public");
+      return "Recurring series created: " + subjectString;
+    }
+
+    // create event <subject> from <dt1> to <dt2> repeats <W> until <YYYY-MM-DD>
+    if (t.size() >= 11
+        && t.get(3).equalsIgnoreCase("from")
+        && t.get(5).equalsIgnoreCase("to")
+        && t.get(7).equalsIgnoreCase("repeats")
+        && t.get(9).equalsIgnoreCase("until")) {
+      LocalDateTime firstStartDateTime = LocalDateTime.parse(
+          t.get(4), dateTimeFormatter);
+      LocalDateTime firstEndDateTime = LocalDateTime.parse(
+          t.get(6), dateTimeFormatter);
+      List<DayOfWeek> weekdayList = parseWeekdays(t.get(8));
+      LocalDate untilDate = LocalDate.parse(t.get(10), dateFormatter);
+      manager.addRecurringSeries(subjectString,
+          firstStartDateTime, firstEndDateTime,
+          weekdayList, 0, untilDate,
+          null, null, "public");
+      return "Recurring series created: " + subjectString;
+    }
+
+    throw new IllegalArgumentException(
+        "Invalid create-event syntax. Examples:\n"
+            + "  create event <subj> on YYYY-MM-DD\n"
+            + "  create event <subj> from YYYY-MM-DDThh:mm to YYYY-MM-DDThh:mm\n"
+            + "  create event <subj> from … repeats MW for <n>\n"
+            + "  create event <subj> from … repeats MW until YYYY-MM-DD"
+    );
+  }
+
+  private String parseEdit(List<String> t) {
+    if (t.size() < 2) {
+      throw new IllegalArgumentException("Invalid edit syntax.");
+    }
+
+    String target = t.get(1).toLowerCase();
+    if (target.equals("calendar")) {
+      return parseEditCalendar(t);
+    } else if (target.equals("event") || target.equals("events") || target.equals("series")) {
+      return parseEditEvent(t);
+    } else {
+      throw new IllegalArgumentException("Invalid edit syntax.");
+    }
+  }
+
+  private String parseEditCalendar(List<String> t) {
+    if (t.size() != 7 ||
+        !t.get(2).equals("--name") ||
+        !t.get(4).equals("--property")) {
+      throw new IllegalArgumentException(
+          "Invalid syntax. Expected: edit calendar --name <name> --property <property> <value>"
+      );
+    }
+
+    String name = t.get(3);
+    String property = t.get(5);
+    String value = t.get(6);
+
+    try {
+      manager.editCalendar(name, property, value);
+      if (property.equals("name")) {
+        return "Calendar updated: " + value;
+      } else {
+        return "Calendar updated: " + name;
+      }
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Error editing calendar: " + e.getMessage());
+    }
+  }
+
+  private String parseEditEvent(List<String> t) {
+    String editTarget = t.get(1).toLowerCase();
+
+    if (editTarget.equals("event")) {
+      int idxFrom = findIndex(t, "from");
+      int idxTo = findIndex(t, "to");
+      if (idxFrom >= 0 && idxFrom + 1 < t.size()) {
+        LocalDateTime.parse(t.get(idxFrom + 1), dateTimeFormatter);
+      }
+      if (idxTo >= 0 && idxTo + 1 < t.size()) {
+        LocalDateTime.parse(t.get(idxTo + 1), dateTimeFormatter);
+      }
+    } else {
+      int idxFrom = findIndex(t, "from");
+      if (idxFrom >= 0 && idxFrom + 1 < t.size()) {
+        LocalDateTime.parse(t.get(idxFrom + 1), dateTimeFormatter);
+      }
+    }
+
+    if (t.size() < 4) {
+      throw new IllegalArgumentException("Invalid edit syntax.");
+    }
+    String propertyName = t.get(2).toLowerCase();
+    String subjectString = t.get(3);
+
+    if (editTarget.equals("event")) {
+      if (t.size() != 10
+          || !t.get(4).equalsIgnoreCase("from")
+          || !t.get(6).equalsIgnoreCase("to")
+          || !t.get(8).equalsIgnoreCase("with")) {
+        throw new IllegalArgumentException(
+            "Invalid edit event syntax. Expected:\n"
+                + "  edit event <property> <subject> from YYYY-MM-DDThh:mm "
+                + "to YYYY-MM-DDThh:mm with <newValue>"
+        );
+      }
+      LocalDateTime dtStart = LocalDateTime.parse(t.get(5), dateTimeFormatter);
+      LocalDateTime dtEnd = LocalDateTime.parse(t.get(7), dateTimeFormatter);
+      String newValue = t.get(9);
+
+      editEventProperty(subjectString, dtStart, dtEnd, propertyName, newValue, "single");
+      return "Event edited: " + subjectString;
+
+    } else if (editTarget.equals("events")) {
+      if (t.size() != 8
+          || !t.get(4).equalsIgnoreCase("from")
+          || !t.get(6).equalsIgnoreCase("with")) {
+        throw new IllegalArgumentException(
+            "Invalid edit events syntax. Expected:\n"
+                + "  edit events <property> <subject> from YYYY-MM-DDThh:mm "
+                + "with <newValue>"
+        );
+      }
+      LocalDateTime dtStart = LocalDateTime.parse(t.get(5), dateTimeFormatter);
+      String newValue = t.get(7);
+
+      editEventProperty(subjectString, dtStart, null, propertyName, newValue, "from");
+      return "Series edited from: " + subjectString;
+
+    } else {
+      if (t.size() != 8
+          || !t.get(4).equalsIgnoreCase("from")
+          || !t.get(6).equalsIgnoreCase("with")) {
+        throw new IllegalArgumentException(
+            "Invalid edit series syntax. Expected:\n"
+                + "  edit series <property> <subject> from YYYY-MM-DDThh:mm "
+                + "with <newValue>"
+        );
+      }
+      LocalDateTime dtStart = LocalDateTime.parse(t.get(5), dateTimeFormatter);
+      String newValue = t.get(7);
+
+      editEventProperty(subjectString, dtStart, null, propertyName, newValue, "all");
+      return "All instances of series edited: " + subjectString;
+    }
+  }
+
+  private void editEventProperty(String subject, LocalDateTime start, LocalDateTime end,
+                                 String property, String newValue, String mode) {
+    Event event = manager.findEvent(subject, start, end);
+
+    switch (property) {
+      case "subject":
+        if (mode.equals("single")) {
+          manager.editSingleEvent(event, newValue, null, null, null, null, null);
+        } else if (mode.equals("from")) {
+          manager.editSeriesFrom(event, newValue, null, null, null, null, null);
+        } else {
+          manager.editSeriesAll(event, newValue, null, null, null, null, null);
+        }
+        break;
+      case "start":
+        LocalDateTime newStart = LocalDateTime.parse(newValue, dateTimeFormatter);
+        if (mode.equals("single")) {
+          manager.editSingleEvent(event, null, newStart, null, null, null, null);
+        } else if (mode.equals("from")) {
+          manager.editSeriesFrom(event, null, newStart, null, null, null, null);
+        } else {
+          manager.editSeriesAll(event, null, newStart, null, null, null, null);
+        }
+        break;
+      case "end":
+        LocalDateTime newEnd = LocalDateTime.parse(newValue, dateTimeFormatter);
+        if (mode.equals("single")) {
+          manager.editSingleEvent(event, null, null, newEnd, null, null, null);
+        } else if (mode.equals("from")) {
+          manager.editSeriesFrom(event, null, null, newEnd, null, null, null);
+        } else {
+          manager.editSeriesAll(event, null, null, newEnd, null, null, null);
+        }
+        break;
+      case "description":
+        if (mode.equals("single")) {
+          manager.editSingleEvent(event, null, null, null, newValue, null, null);
+        } else if (mode.equals("from")) {
+          manager.editSeriesFrom(event, null, null, null, newValue, null, null);
+        } else {
+          manager.editSeriesAll(event, null, null, null, newValue, null, null);
+        }
+        break;
+      case "location":
+        if (mode.equals("single")) {
+          manager.editSingleEvent(event, null, null, null, null, newValue, null);
+        } else if (mode.equals("from")) {
+          manager.editSeriesFrom(event, null, null, null, null, newValue, null);
+        } else {
+          manager.editSeriesAll(event, null, null, null, null, newValue, null);
+        }
+        break;
+      case "status":
+        if (mode.equals("single")) {
+          manager.editSingleEvent(event, null, null, null, null, null, newValue);
+        } else if (mode.equals("from")) {
+          manager.editSeriesFrom(event, null, null, null, null, null, newValue);
+        } else {
+          manager.editSeriesAll(event, null, null, null, null, null, newValue);
+        }
+        break;
+      default:
+        throw new IllegalArgumentException(
+            "Unknown property \"" + property
+                + "\". Valid: subject, start, end, description, location, status."
+        );
+    }
+  }
+
+  private String parseUse(List<String> t) {
+    if (t.size() != 4 ||
+        !t.get(1).equalsIgnoreCase("calendar") ||
+        !t.get(2).equals("--name")) {
+      throw new IllegalArgumentException(
+          "Invalid syntax. Expected: use calendar --name <name>"
+      );
+    }
+
+    String name = t.get(3);
+    try {
+      manager.useCalendar(name);
+      return "Using calendar: " + name;
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Error switching calendar: " + e.getMessage());
+    }
+  }
+
+  private String parseCopy(List<String> t) {
+    if (t.size() < 3) {
+      throw new IllegalArgumentException("Invalid copy syntax.");
+    }
+
+    String copyType = t.get(1).toLowerCase();
+    if (copyType.equals("event")) {
+      return parseCopyEvent(t);
+    } else if (copyType.equals("events")) {
+      return parseCopyEvents(t);
+    } else {
+      throw new IllegalArgumentException(
+          "Invalid copy type. Use 'event' or 'events'."
+      );
+    }
+  }
+
+  private String parseCopyEvent(List<String> t) {
+    if (t.size() != 9 ||
+        !t.get(3).equalsIgnoreCase("on") ||
+        !t.get(5).equals("--target") ||
+        !t.get(7).equalsIgnoreCase("to")) {
+      throw new IllegalArgumentException(
+          "Invalid syntax. Expected: copy event <name> on <datetime> " +
+              "--target <calendar> to <datetime>"
+      );
+    }
+
+    String eventName = t.get(2);
+    LocalDateTime srcDateTime = LocalDateTime.parse(t.get(4), dateTimeFormatter);
+    String targetCalendar = t.get(6);
+    LocalDateTime destDateTime = LocalDateTime.parse(t.get(8), dateTimeFormatter);
+
+    try {
+      manager.copyEvent(eventName, srcDateTime, targetCalendar, destDateTime);
+      return "Event copied: " + eventName + " → " + targetCalendar;
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Error copying event: " + e.getMessage());
+    }
+  }
+
+  private String parseCopyEvents(List<String> t) {
+    if (t.size() >= 7 && t.get(2).equalsIgnoreCase("on")) {
+      if (t.size() != 8 ||
+          !t.get(4).equals("--target") ||
+          !t.get(6).equalsIgnoreCase("to")) {
+        throw new IllegalArgumentException(
+            "Invalid syntax. Expected: copy events on <date> --target <calendar> to <date>"
+        );
+      }
+
+      LocalDate srcDate = LocalDate.parse(t.get(3), dateFormatter);
+      String targetCalendar = t.get(5);
+      LocalDate destDate = LocalDate.parse(t.get(7), dateFormatter);
+
+      try {
+        manager.copyEventsOnDate(srcDate.atStartOfDay(), targetCalendar, destDate.atStartOfDay());
+        return "Events copied on " + srcDate + " → " + targetCalendar;
+      } catch (Exception e) {
+        throw new IllegalArgumentException("Error copying events: " + e.getMessage());
+      }
+    } else if (t.size() >= 10 && t.get(2).equalsIgnoreCase("between")) {
+      if (t.size() != 10 ||
+          !t.get(4).equalsIgnoreCase("and") ||
+          !t.get(6).equals("--target") ||
+          !t.get(8).equalsIgnoreCase("to")) {
+        throw new IllegalArgumentException(
+            "Invalid syntax. Expected: copy events between <date> and <date> " +
+                "--target <calendar> to <date>"
+        );
+      }
+
+      LocalDate fromDate = LocalDate.parse(t.get(3), dateFormatter);
+      LocalDate toDate = LocalDate.parse(t.get(5), dateFormatter);
+      String targetCalendar = t.get(7);
+      LocalDate destDate = LocalDate.parse(t.get(9), dateFormatter);
+
+      try {
+        manager.copyEventsBetween(
+            fromDate.atStartOfDay(),
+            toDate.atTime(23, 59),
+            targetCalendar,
+            destDate.atStartOfDay()
+        );
+        return "Events copied between " + fromDate + " and " + toDate + " → " + targetCalendar;
+      } catch (Exception e) {
+        throw new IllegalArgumentException("Error copying events: " + e.getMessage());
+      }
+    } else {
+      throw new IllegalArgumentException(
+          "Invalid copy events syntax. Use 'on <date>' or 'between <date> and <date>'"
+      );
+    }
+  }
+
+  private String parsePrint(List<String> t) {
+    if (t.size() == 4
+        && t.get(1).equalsIgnoreCase("events")
+        && t.get(2).equalsIgnoreCase("on")) {
+      LocalDate queryDate = LocalDate.parse(t.get(3), dateFormatter);
+      List<Event> eventList = manager.getEventsOnDate(queryDate);
+      if (eventList.isEmpty()) {
+        return "No events on this date.";
+      }
+      StringBuilder response = new StringBuilder();
+      for (Event eachEvent : eventList) {
+        response.append("• ").append(eachEvent.toString()).append("\n");
+      }
+      return response.toString().trim();
+    }
+
+    if (t.size() == 6
+        && t.get(1).equalsIgnoreCase("events")
+        && t.get(2).equalsIgnoreCase("from")
+        && t.get(4).equalsIgnoreCase("to")) {
+      LocalDateTime fromDateTime = LocalDateTime.parse(
+          t.get(3), dateTimeFormatter);
+      LocalDateTime toDateTime = LocalDateTime.parse(
+          t.get(5), dateTimeFormatter);
+      List<Event> eventList = manager.getEventsBetween(fromDateTime, toDateTime);
+      if (eventList.isEmpty()) {
+        return "No events in that range.";
+      }
+      StringBuilder response = new StringBuilder();
+      for (Event eachEvent : eventList) {
+        response.append("• ").append(eachEvent.toString()).append("\n");
+      }
+      return response.toString().trim();
+    }
+
+    throw new IllegalArgumentException(
+        "Invalid print-events syntax. Examples:\n"
+            + "  print events on YYYY-MM-DD\n"
+            + "  print events from YYYY-MM-DDThh:mm to YYYY-MM-DDThh:mm"
+    );
+  }
+
+  private String parseShow(List<String> t) {
+    if (t.size() == 4
+        && t.get(1).equalsIgnoreCase("status")
+        && t.get(2).equalsIgnoreCase("on")) {
+      LocalDateTime queryDateTime = LocalDateTime.parse(
+          t.get(3), dateTimeFormatter);
+      boolean busy = manager.isBusyAt(queryDateTime);
+      return busy ? "Busy" : "Available";
+    }
+    throw new IllegalArgumentException(
+        "Invalid show-status syntax. Expected:\n"
+            + "  show status on YYYY-MM-DDThh:mm"
+    );
+  }
+
+  // Helpers
+
+  private int findIndex(List<String> tokens, String target) {
+    for (int i = 0; i < tokens.size(); i++) {
+      if (tokens.get(i).equalsIgnoreCase(target)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private List<String> tokenize(String raw) {
+    List<String> tokenList = new ArrayList<>();
+    boolean insideQuotes = false;
+    StringBuilder buffer = new StringBuilder();
+
+    for (char character : raw.toCharArray()) {
+      if (character == '"') {
+        insideQuotes = !insideQuotes;
+        continue;
+      }
+      if (character == ' ' && !insideQuotes) {
+        if (buffer.length() > 0) {
+          tokenList.add(buffer.toString());
+          buffer.setLength(0);
+        }
+      } else {
+        buffer.append(character);
+      }
+    }
+    if (buffer.length() > 0) {
+      tokenList.add(buffer.toString());
+    }
+    if (insideQuotes) {
+      throw new IllegalArgumentException("Unclosed quotation in command.");
+    }
+    return tokenList;
+  }
+
+  private List<DayOfWeek> parseWeekdays(String weekdayString) {
+    List<DayOfWeek> weekdayList = new ArrayList<>();
+    for (char letter : weekdayString.toCharArray()) {
+      switch (Character.toUpperCase(letter)) {
+        case 'M':
+          weekdayList.add(DayOfWeek.MONDAY);
+          break;
+        case 'T':
+          weekdayList.add(DayOfWeek.TUESDAY);
+          break;
+        case 'W':
+          weekdayList.add(DayOfWeek.WEDNESDAY);
+          break;
+        case 'R':
+          weekdayList.add(DayOfWeek.THURSDAY);
+          break;
+        case 'F':
+          weekdayList.add(DayOfWeek.FRIDAY);
+          break;
+        case 'S':
+          weekdayList.add(DayOfWeek.SATURDAY);
+          break;
+        case 'U':
+          weekdayList.add(DayOfWeek.SUNDAY);
+          break;
+        default:
+          throw new IllegalArgumentException(
+              "Invalid weekday letter: '" + letter + "'. Use M T W R F S U."
+          );
+      }
+    }
+    return weekdayList;
+  }
+
+  public CalendarManager getManager() {
+    return manager;
+  }
+
+  public void createEvent(String subject, LocalDateTime start, LocalDateTime end,
+                          String description, String location, String status) {
+    manager.addEvent(subject, start, end, description, location, status);
+  }
+
+  public List<Event> getEventsOnDate(LocalDate date) {
+    return manager.getEventsOnDate(date);
+  }
+
+  public List<Event> getEventsBetween(LocalDateTime start, LocalDateTime end) {
+    return manager.getEventsBetween(start, end);
+  }
+}
