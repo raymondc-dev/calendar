@@ -1,0 +1,383 @@
+package calendar.model;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Holds many named calendars (CalendarCore), each with its own timezone,
+ * and routes all CalendarModel calls to the currently selected one.
+ * Also provides “copy” APIs to move events between calendars/timezones.
+ */
+public class CalendarManager implements CalendarModel {
+  private final Map<String,CalendarCore> calendars = new HashMap<>();
+  private final Map<String,ZoneId> timezones = new HashMap<>();
+  private String current;
+
+  /**
+   * Create a CalendarManager with a default calendar name and system timezone.
+   * Throws if the name is null or blank.
+   *
+   * @param defaultName name of the default calendar
+   */
+  public CalendarManager(String defaultName) {
+    this(defaultName, ZoneId.systemDefault());
+  }
+
+  /**
+   * Create a CalendarManager with a default calendar name and timezone ID.
+   * Throws if the name is null or blank.
+   *
+   * @param defaultName name of the default calendar
+   * @param tzId        timezone ID (e.g., "America/New_York")
+   */
+  public CalendarManager(String defaultName, String tzId) {
+    this(defaultName, ZoneId.of(tzId));
+  }
+
+  /**
+   * Create a CalendarManager with a default calendar name and timezone.
+   * Throws if the name is null or blank.
+   *
+   * @param defaultName name of the default calendar
+   * @param zone        timezone for the default calendar
+   */
+  public CalendarManager(String defaultName, ZoneId zone) {
+    if (defaultName == null || defaultName.isBlank()) {
+      throw new IllegalArgumentException("Calendar name cannot be null or blank");
+    }
+    calendars.put(defaultName, new CalendarCore());
+    timezones.put(defaultName, zone);
+    current = defaultName;
+  }
+
+  /**
+   * Get the names of all available calendars.
+   *
+   * @return unmodifiable set of calendar names
+   */
+  public Set<String> listCalendars() {
+    return Collections.unmodifiableSet(calendars.keySet());
+  }
+
+  /**
+   * Create a new calendar with the given name and timezone.
+   * Throws if the calendar already exists.
+   *
+   * @param name  name of the new calendar
+   * @param tzId  timezone ID (e.g., "America/New_York")
+   */
+  public void createCalendar(String name, String tzId) {
+    if (calendars.containsKey(name)) {
+      throw new IllegalArgumentException("Calendar already exists: " + name);
+    }
+    ZoneId zone = ZoneId.of(tzId);
+    calendars.put(name, new CalendarCore());
+    timezones.put(name, zone);
+  }
+
+  /**
+   * Edit properties of an existing calendar.
+   * Valid properties: "name" (rename) and "timezone" (change timezone).
+   * Throws if the calendar does not exist or if renaming to an existing name.
+   *
+   * @param name      name of the calendar to edit
+   * @param property  property to change ("name" or "timezone")
+   * @param newValue  new value for the property
+   */
+  public void editCalendar(String name, String property, String newValue) {
+    if (!calendars.containsKey(name)) {
+      throw new IllegalArgumentException("No such calendar: " + name);
+    }
+    switch (property.toLowerCase()) {
+      case "name":
+        String newName = newValue;
+        if (calendars.containsKey(newName)) {
+          throw new IllegalArgumentException("Calendar already exists: " + newName);
+        }
+        CalendarCore core = calendars.remove(name);
+        ZoneId       zn   = timezones.remove(name);
+        calendars.put(newName, core);
+        timezones.put(newName, zn);
+        if (current.equals(name)) {
+          current = newName;
+        }
+        break;
+      case "timezone":
+        ZoneId newZone = ZoneId.of(newValue);
+        timezones.put(name, newZone);
+        break;
+      default:
+        throw new IllegalArgumentException(
+            "Unknown property \"" + property + "\". Valid: name, timezone."
+        );
+    }
+  }
+
+  /**
+   * Switch to a different calendar by name.
+   * Throws if the calendar does not exist.
+   *
+   * @param name name of the calendar to switch to
+   */
+  public void useCalendar(String name) {
+    if (!calendars.containsKey(name)) {
+      throw new IllegalArgumentException("No such calendar: " + name);
+    }
+    current = name;
+  }
+
+  /**
+   * Get the name of the currently active calendar.
+   *
+   * @return name of the current calendar
+   */
+  public ZoneId getCurrentTimezone() {
+    return timezones.get(current);
+  }
+
+  /**
+   * Get the timezone for a specific calendar by name.
+   *
+   * @param name name of the calendar
+   * @return ZoneId of the specified calendar, or null if not found
+   */
+  public ZoneId getTimezone(String name) {
+    return timezones.get(name);
+  }
+
+  private CalendarCore activeCore() {
+    return calendars.get(current);
+  }
+
+  @Override
+  public void addEvent(String subj,
+                       LocalDateTime start,
+                       LocalDateTime end,
+                       String desc,
+                       String loc,
+                       String status) {
+    activeCore().addEvent(subj, start, end, desc, loc, status);
+  }
+
+  @Override
+  public void addRecurringSeries(String subj,
+                                 LocalDateTime firstStart,
+                                 LocalDateTime firstEnd,
+                                 List<java.time.DayOfWeek> days,
+                                 int count,
+                                 LocalDate until,
+                                 String desc,
+                                 String loc,
+                                 String status) {
+    activeCore().addRecurringSeries(
+        subj, firstStart, firstEnd, days, count, until, desc, loc, status
+    );
+  }
+
+  @Override
+  public Event findEvent(String subj,
+                         LocalDateTime start,
+                         LocalDateTime end) {
+    return activeCore().findEvent(subj, start, end);
+  }
+
+  @Override
+  public void editSingleEvent(Event ev,
+                              String newSubj,
+                              LocalDateTime newStart,
+                              LocalDateTime newEnd,
+                              String newDesc,
+                              String newLoc,
+                              String newStatus) {
+    activeCore().editSingleEvent(
+        ev, newSubj, newStart, newEnd, newDesc, newLoc, newStatus
+    );
+  }
+
+  @Override
+  public void editSeriesFrom(Event ev,
+                             String newSubj,
+                             LocalDateTime newStart,
+                             LocalDateTime newEnd,
+                             String newDesc,
+                             String newLoc,
+                             String newStatus) {
+    activeCore().editSeriesFrom(
+        ev, newSubj, newStart, newEnd, newDesc, newLoc, newStatus
+    );
+  }
+
+  @Override
+  public void editSeriesAll(Event ev,
+                            String newSubj,
+                            LocalDateTime newStart,
+                            LocalDateTime newEnd,
+                            String newDesc,
+                            String newLoc,
+                            String newStatus) {
+    activeCore().editSeriesAll(
+        ev, newSubj, newStart, newEnd, newDesc, newLoc, newStatus
+    );
+  }
+
+  @Override
+  public void removeSingleEvent(Event ev) {
+    activeCore().removeSingleEvent(ev);
+  }
+
+  @Override
+  public List<Event> getEventsOnDate(LocalDate date) {
+    return activeCore().getEventsOnDate(date);
+  }
+
+  @Override
+  public List<Event> getEventsBetween(LocalDateTime from,
+                                      LocalDateTime to) {
+    return activeCore().getEventsBetween(from, to);
+  }
+
+  @Override
+  public boolean isBusyAt(LocalDateTime t) {
+    return activeCore().isBusyAt(t);
+  }
+
+  /**
+   * Copy a single event from the current calendar to a target calendar,
+   * shifting it to the specified destination date-time.
+   *
+   * @param subject        subject of the event to copy
+   * @param srcStart      start date-time of the source event
+   * @param targetCalendar name of the target calendar
+   * @param destStart     start date-time in the target calendar for copied event
+   */
+  public void copyEvent(String subject,
+                        LocalDateTime srcStart,
+                        String targetCalendar,
+                        LocalDateTime destStart) {
+    LocalDate      day = srcStart.toLocalDate();
+    List<Event>    evs = activeCore().getEventsOnDate(day);
+    Event ev = evs.stream()
+        .filter(e -> e.getSubject().equals(subject)
+            && e.getStart().equals(srcStart))
+        .findFirst()
+        .orElseThrow(() ->
+            new IllegalArgumentException(
+                "No such event: " + subject + " at " + srcStart
+            )
+        );
+
+    CalendarCore dstCore = calendars.get(targetCalendar);
+    if (dstCore == null) {
+      throw new IllegalArgumentException("No such calendar: " + targetCalendar);
+    }
+
+    long minutes = ev.getEnd() != null
+        ? ChronoUnit.MINUTES.between(ev.getStart(), ev.getEnd())
+        : 0;
+    java.time.LocalDateTime destEnd = ev.getEnd() != null
+        ? destStart.plusMinutes(minutes)
+        : null;
+
+    dstCore.addEvent(
+        ev.getSubject(),
+        destStart,
+        destEnd,
+        ev.getDescription(),
+        ev.getLocation(),
+        ev.getStatus()
+    );
+  }
+
+  /**
+   * Copy all events on a specific date from the current calendar to a target calendar,
+   * shifting them to the specified destination date-time.
+   *
+   * @param srcDateTime    source date-time in the current calendar
+   * @param targetCalendar name of the target calendar
+   * @param destDateTime   destination date-time in the target calendar
+   */
+  public void copyEventsOnDate(LocalDateTime srcDateTime,
+                               String targetCalendar,
+                               LocalDateTime destDateTime) {
+    ZoneId srcZone = timezones.get(current);
+    ZoneId dstZone = timezones.get(targetCalendar);
+    LocalDate day  = srcDateTime.toLocalDate();
+    List<Event> evs = activeCore().getEventsOnDate(day);
+
+    CalendarCore dstCore = calendars.get(targetCalendar);
+    if (dstCore == null) {
+      throw new IllegalArgumentException("No such calendar: " + targetCalendar);
+    }
+
+    for (Event e : evs) {
+      Instant inst = e.getStart().atZone(srcZone).toInstant();
+      LocalDateTime conv = LocalDateTime.ofInstant(inst, dstZone);
+
+      LocalDateTime newStart = destDateTime
+          .withHour(conv.getHour())
+          .withMinute(conv.getMinute());
+
+      long duration = e.getEnd() != null
+          ? ChronoUnit.MINUTES.between(e.getStart(), e.getEnd())
+          : 0;
+      LocalDateTime newEnd = e.getEnd() != null
+          ? newStart.plusMinutes(duration)
+          : null;
+
+      dstCore.addEvent(
+          e.getSubject(),
+          newStart,
+          newEnd,
+          e.getDescription(),
+          e.getLocation(),
+          e.getStatus()
+      );
+    }
+  }
+
+  /**
+   * Copy all events between two date-times from the current calendar to a target calendar,
+   * shifting them by the specified duration.
+   *
+   * @param from           start date-time of source range
+   * @param to             end date-time of source range
+   * @param targetCalendar name of target calendar
+   * @param destStart      start date-time in target calendar for copied events
+   */
+  public void copyEventsBetween(LocalDateTime from,
+                                LocalDateTime to,
+                                String targetCalendar,
+                                LocalDateTime destStart) {
+    List<Event> evs = activeCore().getEventsBetween(from, to);
+    long shift = ChronoUnit.MINUTES.between(from, destStart);
+
+    CalendarCore dstCore = calendars.get(targetCalendar);
+    if (dstCore == null) {
+      throw new IllegalArgumentException("No such calendar: " + targetCalendar);
+    }
+
+    for (Event e : evs) {
+      LocalDateTime ns = e.getStart().plusMinutes(shift);
+      LocalDateTime ne = e.getEnd() != null
+          ? e.getEnd().plusMinutes(shift)
+          : null;
+
+      dstCore.addEvent(
+          e.getSubject(),
+          ns,
+          ne,
+          e.getDescription(),
+          e.getLocation(),
+          e.getStatus()
+      );
+    }
+  }
+}
