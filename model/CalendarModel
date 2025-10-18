@@ -1,0 +1,201 @@
+package calendar.model;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+
+/**
+ * Core interface defining all calendar operations for managing events and recurring series.
+ * This interface provides comprehensive calendar functionality including event creation,
+ * modification, querying, and deletion. Supports both single events and recurring series
+ * with flexible scheduling options.
+ * Events are uniquely identified by subject, start time, and end time.
+ * All date/time parameters use LocalDateTime for precision.
+ */
+public interface CalendarModel {
+
+  /**
+   * Adds a single event to the calendar.
+   * Creates a new event with the specified properties. Events are uniquely identified
+   * by the combination of subject, start time, and end time. If end is null, the event
+   * is treated as an all-day event.
+   *
+   * @param subject     non-null event title/subject
+   * @param start       non-null start date and time
+   * @param end         end date and time (null indicates all-day event)
+   * @param description optional event description (nullable)
+   * @param location    optional event location (nullable)
+   * @param status      visibility status: "public" or "private"
+   * @throws IllegalArgumentException if subject is null, start is null, end is before start,
+   *                                  or an identical event already exists
+   */
+  void addEvent(
+      String subject,
+      LocalDateTime start,
+      LocalDateTime end,
+      String description,
+      String location,
+      String status
+  );
+
+  /**
+   * Creates a recurring series of events based on specified weekdays and termination criteria.
+   * Generates multiple event occurrences starting from firstStart, creating events on
+   * the specified weekdays. Series terminates when either the occurrence count is reached
+   * or the until date is exceeded. Exactly one termination method must be specified.
+   * Each occurrence maintains the same subject, duration, description, location, and status
+   * as the first event, but with dates adjusted according to the recurrence pattern.
+   *
+   * @param subject     non-null subject for all events in the series
+   * @param firstStart  non-null start date/time of first occurrence
+   * @param firstEnd    end date/time of first occurrence (null for all-day)
+   * @param weekdays    non-empty list of days when events should occur
+   * @param occurrences total number of occurrences (0 if using untilDate)
+   * @param untilDate   last date for creating events (null if using occurrences)
+   * @param description optional description for all events (nullable)
+   * @param location    optional location for all events (nullable)
+   * @param status      visibility status for all events
+   * @throws IllegalArgumentException if parameters are invalid, both or neither termination
+   *                                  criteria are specified, or conflicts arise during creation
+   */
+  void addRecurringSeries(
+      String subject,
+      LocalDateTime firstStart,
+      LocalDateTime firstEnd,
+      List<DayOfWeek> weekdays,
+      int occurrences,
+      LocalDate untilDate,
+      String description,
+      String location,
+      String status
+  );
+
+  /**
+   * Finds a unique event by its identifying characteristics.
+   * Searches for an event that exactly matches the provided subject, start time,
+   * and end time. Used primarily for editing and deletion operations.
+   *
+   * @param subject event subject to match
+   * @param start   start date/time to match
+   * @param end     end date/time to match (nullable)
+   * @return matching Event instance, or null if not found or multiple matches exist
+   */
+  Event findEvent(
+      String subject,
+      LocalDateTime start,
+      LocalDateTime end
+  );
+
+  /**
+   * Edits properties of a single event instance.
+   * Modifies only the specified event without affecting other events in a recurring series.
+   * Null parameters indicate no change to that property.
+   *
+   * @param ev             event instance to modify
+   * @param newSubject     new subject (null to keep current)
+   * @param newStart       new start date/time (null to keep current)
+   * @param newEnd         new end date/time (null to keep current)
+   * @param newDescription new description (null to keep current)
+   * @param newLocation    new location (null to keep current)
+   * @param newStatus      new status (null to keep current)
+   * @throws IllegalArgumentException if edit would create a duplicate event or invalid state
+   */
+  void editSingleEvent(
+      Event ev,
+      String newSubject,
+      LocalDateTime newStart,
+      LocalDateTime newEnd,
+      String newDescription,
+      String newLocation,
+      String newStatus
+  );
+
+  /**
+   * Edits the specified event and all future events in its recurring series.
+   * Applies changes to the given event occurrence and all subsequent occurrences
+   * in the same recurring series. Past occurrences remain unchanged.
+   *
+   * @param ev             event occurrence in the series to start editing from
+   * @param newSubject     new subject for this and future events (null to keep current)
+   * @param newStart       new start date/time (null to keep current)
+   * @param newEnd         new end date/time (null to keep current)
+   * @param newDescription new description (null to keep current)
+   * @param newLocation    new location (null to keep current)
+   * @param newStatus      new status (null to keep current)
+   * @throws IllegalArgumentException if edits would create conflicts or invalid state
+   */
+  void editSeriesFrom(
+      Event ev,
+      String newSubject,
+      LocalDateTime newStart,
+      LocalDateTime newEnd,
+      String newDescription,
+      String newLocation,
+      String newStatus
+  );
+
+  /**
+   * Edits all events in the recurring series.
+   * Applies changes to every event occurrence in the same recurring series,
+   * both past and future events.
+   *
+   * @param ev             any event occurrence in the series
+   * @param newSubject     new subject for all events (null to keep current)
+   * @param newStart       new start date/time (null to keep current)
+   * @param newEnd         new end date/time (null to keep current)
+   * @param newDescription new description (null to keep current)
+   * @param newLocation    new location (null to keep current)
+   * @param newStatus      new status (null to keep current)
+   * @throws IllegalArgumentException if edits would create conflicts or invalid state
+   */
+  void editSeriesAll(
+      Event ev,
+      String newSubject,
+      LocalDateTime newStart,
+      LocalDateTime newEnd,
+      String newDescription,
+      String newLocation,
+      String newStatus
+  );
+
+  /**
+   * Removes a single event from the calendar.
+   * Deletes only the specified event instance. For recurring series,
+   * only the individual occurrence is removed.
+   *
+   * @param ev event instance to remove
+   */
+  void removeSingleEvent(Event ev);
+
+  /**
+   * Returns all events that occur on the specified date.
+   * Finds events whose time span includes any part of the given date,
+   * regardless of the specific start or end times.
+   *
+   * @param date the date to query (time component ignored)
+   * @return list of events occurring on the date (may be empty)
+   */
+  List<Event> getEventsOnDate(LocalDate date);
+
+  /**
+   * Returns all events that overlap with the specified date-time range.
+   * Finds events that have any temporal overlap with the given range,
+   * including events that start before or end after the range boundaries.
+   *
+   * @param from inclusive start of the query range
+   * @param to   inclusive end of the query range
+   * @return list of overlapping events (may be empty)
+   */
+  List<Event> getEventsBetween(LocalDateTime from, LocalDateTime to);
+
+  /**
+   * Checks if any event is active at the specified timestamp.
+   * Determines availability by checking if any event's time span
+   * includes the given timestamp. Useful for scheduling conflict detection.
+   *
+   * @param timestamp the exact moment to check
+   * @return true if any event is active at this time, false if available
+   */
+  boolean isBusyAt(LocalDateTime timestamp);
+}
