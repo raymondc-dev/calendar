@@ -1,0 +1,44 @@
+package calendar.model;
+
+import java.time.LocalDateTime;
+
+/**
+ * Represents a calendar event with basic properties.
+ */
+public interface Event {
+  /**
+   * Getter method to retrieve the subject of the given event.
+   * @return the event subject/title
+   */
+  String getSubject();
+
+  /**
+   * Getter method to retrieve the start time of the given event.
+   * @return the event start date-time
+   */
+  LocalDateTime getStart();
+
+  /**
+   * Getter method to retrieve the end time of the given event.
+   * @return the event end date-time (may be null for all-day)
+   */
+  LocalDateTime getEnd();
+
+  /**
+   * Getter method to retrieve the description of the given event.
+   * @return the event description (may be null)
+   */
+  String getDescription();
+
+  /**
+   * Getter method to retrieve the location of the given event.
+   * @return the event location (may be null)
+   */
+  String getLocation();
+
+  /**
+   * Getter method to retrieve the status of the given event.
+   * @return the event status (e.g., "public" or "private")
+   */
+  String getStatus();
+}
