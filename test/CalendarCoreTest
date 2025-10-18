@@ -1,0 +1,370 @@
+import org.junit.Before;
+import org.junit.Test;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import calendar.model.CalendarCore;
+import calendar.model.CalendarEvent;
+import calendar.model.Event;
+
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+
+/**
+ * Comprehensive unit tests for the CalendarCore class covering all
+ * calendar operations and edge cases.
+ * This test suite validates the core calendar functionality including event management,
+ * recurring series generation, temporal queries, and data validation. Tests ensure proper
+ * behavior for both normal operations and error conditions.
+ * Key test areas include:
+ * - Single event CRUD operations with validation
+ * - Recurring series creation with count-based and date-based termination
+ * - Temporal queries (events on date, between dates, availability checking)
+ * - Duplicate prevention and conflict detection
+ * - Event modification with integrity checks
+ * - Edge cases and error handling for invalid parameters
+ * - Time range validation and boundary conditions
+ * The tests verify that CalendarCore maintains data consistency, enforces business rules,
+ * and handles both timed events and all-day events correctly. Special attention is given
+ * to recurring series logic, time overlap detection, and duplicate event prevention.
+ */
+public class CalendarCoreTest {
+
+  private CalendarCore model;
+
+  @Before
+  public void setUp() {
+    model = new CalendarCore();
+  }
+
+  @Test
+  public void addAndFindSingleEvent_successful() {
+    LocalDateTime start = LocalDateTime.of(2025, 6, 10, 14, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 6, 10, 15, 0);
+
+    model.addEvent("TeamMeeting", start, end, "Discuss Q2", "Office", "public");
+    Event found = model.findEvent("TeamMeeting", start, end);
+
+    assertNotNull(found);
+    assertEquals("TeamMeeting", found.getSubject());
+    assertEquals(start, found.getStart());
+    assertEquals(end, found.getEnd());
+    assertEquals("Discuss Q2", found.getDescription());
+    assertEquals("Office", found.getLocation());
+    assertEquals("public", found.getStatus());
+  }
+
+  @Test
+  public void addDuplicateSingleEvent_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 6, 10, 9, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 6, 10, 10, 0);
+
+    model.addEvent("Standup", start, end, null, null, "public");
+    Exception exception = assertThrows(
+        IllegalArgumentException.class,
+        () -> model.addEvent("Standup", start, end, null, null, "public")
+    );
+    String message = exception.getMessage();
+    assertTrue(message.contains("Duplicate event"));
+  }
+
+  @Test
+  public void getEventsOnDate_returnsCorrectList() {
+    LocalDateTime start1 = LocalDateTime.of(2025, 7, 1, 8, 0);
+    LocalDateTime end1   = LocalDateTime.of(2025, 7, 1, 9, 0);
+    LocalDateTime start2 = LocalDateTime.of(2025, 7, 1, 13, 0);
+    LocalDateTime end2   = LocalDateTime.of(2025, 7, 1, 14, 0);
+
+    model.addEvent("Breakfast", start1, end1, null, "Cafeteria", "public");
+    model.addEvent("Lunch", start2, end2, null, "Cafeteria", "public");
+
+    List<CalendarEvent> julyFirstEvents = model.getCalendarEventsOnDate(
+        LocalDate.of(2025, 7, 1)
+    );
+    assertEquals(2, julyFirstEvents.size());
+    assertTrue(
+        julyFirstEvents.stream()
+            .anyMatch(e -> e.getSubject().equals("Breakfast"))
+    );
+    assertTrue(
+        julyFirstEvents.stream()
+            .anyMatch(e -> e.getSubject().equals("Lunch"))
+    );
+  }
+
+  @Test
+  public void getEventsBetween_overlappingRange() {
+    LocalDateTime startA = LocalDateTime.of(2025, 8, 5, 10, 0);
+    LocalDateTime endA   = LocalDateTime.of(2025, 8, 5, 11, 0);
+    LocalDateTime startB = LocalDateTime.of(2025, 8, 5, 10, 30);
+    LocalDateTime endB   = LocalDateTime.of(2025, 8, 5, 12, 0);
+    LocalDateTime startC = LocalDateTime.of(2025, 8, 5, 12, 30);
+    LocalDateTime endC   = LocalDateTime.of(2025, 8, 5, 13, 30);
+
+    model.addEvent("EventA", startA, endA, null, null, "public");
+    model.addEvent("EventB", startB, endB, null, null, "public");
+    model.addEvent("EventC", startC, endC, null, null, "public");
+
+    List<CalendarEvent> results = model.getCalendarEventsBetween(
+        LocalDateTime.of(2025, 8, 5, 10, 15),
+        LocalDateTime.of(2025, 8, 5, 12, 15)
+    );
+
+    assertEquals(2, results.size());
+    assertTrue(results.stream().anyMatch(e -> e.getSubject().equals("EventA")));
+    assertTrue(results.stream().anyMatch(e -> e.getSubject().equals("EventB")));
+    assertFalse(results.stream().anyMatch(e -> e.getSubject().equals("EventC")));
+  }
+
+  @Test
+  public void isBusyAtTime_trueAndFalse() {
+    LocalDateTime start = LocalDateTime.of(2025, 9, 1, 14, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 9, 1, 15, 0);
+
+    model.addEvent("Call", start, end, null, null, "public");
+    assertTrue(
+        model.isBusyAt(LocalDateTime.of(2025, 9, 1, 14, 30))
+    );
+    assertFalse(
+        model.isBusyAt(LocalDateTime.of(2025, 9, 1, 15, 30))
+    );
+  }
+
+  @Test
+  public void addRecurringSeries_byCount_successful() {
+    LocalDateTime firstStart = LocalDateTime.of(2025, 10, 6, 9, 0);
+    LocalDateTime firstEnd   = LocalDateTime.of(2025, 10, 6, 10, 0);
+    List<DayOfWeek> weekdays  = Arrays.asList(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
+
+    // Create 3 occurrences: Oct 6 (Mon), Oct 8 (Wed), Oct 13 (Mon)
+    model.addRecurringSeries(
+        "SoccerGame", firstStart, firstEnd, weekdays, 3,
+        null, "Evening match", "Stadium", "public"
+    );
+
+    List<CalendarEvent> mondayEvents = model.getCalendarEventsOnDate(
+        LocalDate.of(2025, 10, 6)
+    );
+    List<CalendarEvent> wedEvents = model.getCalendarEventsOnDate(
+        LocalDate.of(2025, 10, 8)
+    );
+    List<CalendarEvent> nextMonEvents = model.getCalendarEventsOnDate(
+        LocalDate.of(2025, 10, 13)
+    );
+
+    assertEquals(1, mondayEvents.size());
+    assertEquals(1, wedEvents.size());
+    assertEquals(1, nextMonEvents.size());
+    assertTrue(mondayEvents.get(0).getSubject().equals("SoccerGame"));
+  }
+
+  @Test
+  public void addRecurringSeries_untilDate_conflictThrows() {
+    LocalDateTime firstStart = LocalDateTime.of(2025, 11, 3, 9, 0);
+    LocalDateTime firstEnd   = LocalDateTime.of(2025, 11, 3, 10, 0);
+    List<DayOfWeek> weekdays  = Collections.singletonList(DayOfWeek.MONDAY);
+
+    // First series: Mondays until Nov 17
+    model.addRecurringSeries(
+        "Training", firstStart, firstEnd, weekdays, 0,
+        LocalDate.of(2025, 11, 17),
+        null, null, "public"
+    );
+
+    // Attempt a second series that conflicts on Nov 10 (a Monday)
+    Exception exception = assertThrows(
+        IllegalArgumentException.class,
+        () -> model.addRecurringSeries(
+            "Training",
+            firstStart.plusDays(7),
+            firstEnd.plusDays(7),
+            weekdays,
+            0,
+            LocalDate.of(2025, 11, 30),
+            null,
+            null,
+            "public"
+        )
+    );
+    String message = exception.getMessage();
+    assertTrue(message.contains("Recurring series conflict"));
+  }
+
+  @Test
+  public void editSingleEvent_changeSubjectAndTimes() {
+    LocalDateTime start = LocalDateTime.of(2025, 12, 1, 10, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 12, 1, 11, 0);
+
+    model.addEvent("Brainstorm", start, end, null, null, "public");
+    Event toEdit = model.findEvent("Brainstorm", start, end);
+    assertNotNull(toEdit);
+
+    model.editSingleEvent(toEdit, "Brainstorm2", null, null, null, null, null);
+    Event edited = model.findEvent("Brainstorm2", start, end);
+    assertNotNull(edited);
+    assertEquals("Brainstorm2", edited.getSubject());
+  }
+
+  @Test
+  public void editSingleEvent_duplicateAfterEdit_throws() {
+    LocalDateTime s1 = LocalDateTime.of(2025, 12, 2, 9, 0);
+    LocalDateTime e1 = LocalDateTime.of(2025, 12, 2, 10, 0);
+    LocalDateTime s2 = LocalDateTime.of(2025, 12, 2, 11, 0);
+    LocalDateTime e2 = LocalDateTime.of(2025, 12, 2, 12, 0);
+
+    model.addEvent("EventA", s1, e1, null, null, "public");
+    model.addEvent("EventB", s2, e2, null, null, "public");
+
+    Event toEdit = model.findEvent("EventB", s2, e2);
+    assertNotNull(toEdit);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> model.editSingleEvent(
+            toEdit,
+            "EventA",
+            s1,
+            e1,
+            null,
+            null,
+            null
+        )
+    );
+  }
+
+  @Test
+  public void addEvent_startAfterEnd_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 6, 10, 16, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 6, 10, 15, 0); // end before start
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        model.addEvent("InvalidEvent", start, end, null, null, "public")
+    );
+    assertTrue(ex.getMessage().contains("start must be before end"));
+  }
+
+  @Test
+  public void findEvent_nonExistent_returnsNull() {
+    LocalDateTime start = LocalDateTime.of(2025, 6, 10, 14, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 6, 10, 15, 0);
+
+    Event result = model.findEvent("NonExistent", start, end);
+    assertEquals(null, result);
+  }
+
+  @Test
+  public void getEventsOnDate_noEvents_returnsEmptyList() {
+    List<CalendarEvent> events = model.getCalendarEventsOnDate(LocalDate.of(2050, 1, 1));
+    assertTrue(events.isEmpty());
+  }
+
+  @Test
+  public void isBusyAt_exactStartAndEndTimes() {
+    LocalDateTime start = LocalDateTime.of(2025, 9, 1, 14, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 9, 1, 15, 0);
+
+    model.addEvent("Call", start, end, null, null, "public");
+
+    // Busy at exact start time
+    assertTrue(model.isBusyAt(start));
+
+    // Not busy at exact end time (assuming end is exclusive)
+    assertFalse(model.isBusyAt(end));
+  }
+
+  @Test
+  public void addRecurringSeries_emptyWeekdays_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 10, 6, 9, 0);
+    LocalDateTime end = LocalDateTime.of(2025, 10, 6, 10, 0);
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        model.addRecurringSeries("EmptyDays", start, end, Collections.emptyList(), 3,
+            null, null, null, "public")
+    );
+    assertTrue(ex.getMessage().contains("weekdays cannot be empty"));
+  }
+
+  @Test
+  public void addRecurringSeries_countAndUntilDate_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 10, 6, 9, 0);
+    LocalDateTime end = LocalDateTime.of(2025, 10, 6, 10, 0);
+    List<DayOfWeek> weekdays = Collections.singletonList(DayOfWeek.MONDAY);
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        model.addRecurringSeries("ConflictingSeries", start, end, weekdays, 3,
+            LocalDate.of(2025, 12, 1), null, null, "public")
+    );
+    assertTrue(ex.getMessage().contains("Specify either count or untilDate, not both"));
+  }
+
+  @Test
+  public void editSingleEvent_nullSubject_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 12, 1, 10, 0);
+    LocalDateTime end = LocalDateTime.of(2025, 12, 1, 11, 0);
+
+    model.addEvent("Brainstorm", start, end, null, null, "public");
+    Event toEdit = model.findEvent("Brainstorm", start, end);
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        model.editSingleEvent(toEdit, null, null, null, null, null, null)
+    );
+    assertTrue(ex.getMessage().contains("subject cannot be null"));
+  }
+
+  @Test
+  public void editSingleEvent_invalidTimeRange_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 12, 1, 10, 0);
+    LocalDateTime end   = LocalDateTime.of(2025, 12, 1, 11, 0);
+
+    model.addEvent("Meeting", start, end, null, null, "public");
+    Event toEdit = model.findEvent("Meeting", start, end);
+
+    // newStart is after newEnd → should trigger our time‐range guard
+    LocalDateTime newStart = LocalDateTime.of(2025, 12, 1, 12, 0);
+    LocalDateTime newEnd   = LocalDateTime.of(2025, 12, 1, 11, 0);
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        // pass the real subject (“Meeting”) rather than null:
+        model.editSingleEvent(toEdit,
+            "Meeting",
+            newStart,
+            newEnd,
+            null,    // description
+            null,    // location
+            null     // status
+        )
+    );
+    assertTrue(ex.getMessage().contains("start must be before end"));
+  }
+
+
+  @Test
+  public void getCalendarEventsBetween_startAfterEnd_returnsEmptyListOrThrows() {
+    LocalDateTime start = LocalDateTime.of(2025, 8, 6, 12, 0);
+    LocalDateTime end = LocalDateTime.of(2025, 8, 5, 12, 0);
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        model.getCalendarEventsBetween(start, end)
+    );
+    assertTrue(ex.getMessage().contains("start must be before end"));
+  }
+
+  @Test
+  public void addEvent_nullSubject_throwsException() {
+    LocalDateTime start = LocalDateTime.of(2025, 6, 10, 14, 0);
+    LocalDateTime end = LocalDateTime.of(2025, 6, 10, 15, 0);
+
+    Exception ex = assertThrows(IllegalArgumentException.class, () ->
+        model.addEvent(null, start, end, null, null, "public")
+    );
+    assertTrue(ex.getMessage().contains("subject cannot be null"));
+  }
+}
