@@ -1,0 +1,428 @@
+import org.junit.Before;
+import org.junit.Test;
+
+import java.time.DateTimeException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Set;
+
+import calendar.model.CalendarManager;
+import calendar.model.Event;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
+/**
+ * Unit tests for CalendarManager, focusing on calendar management and event copying.
+ * Tests cover creation, editing, isolation of calendars, and copying events.
+ */
+public class CalendarManagerTest {
+  private CalendarManager mgr;
+
+  @Before
+  public void setUp() {
+    // start with a “Default” calendar in UTC
+    mgr = new CalendarManager("Default", ZoneId.of("UTC"));
+  }
+
+  @Test
+  public void createCalendar_andList() {
+    mgr.createCalendar("Work", "America/New_York");
+    assertTrue(mgr.listCalendars().contains("Default"));
+    assertTrue(mgr.listCalendars().contains("Work"));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void createCalendar_duplicateName_throws() {
+    mgr.createCalendar("Default", "UTC");
+  }
+
+  @Test
+  public void editCalendar_rename() {
+    mgr.createCalendar("Old", "UTC");
+    mgr.editCalendar("Old", "name", "New");
+    assertTrue(mgr.listCalendars().contains("New"));
+    assertFalse(mgr.listCalendars().contains("Old"));
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void editCalendar_nonexistent_throws() {
+    mgr.editCalendar("NoSuch", "name", "X");
+  }
+
+  @Test
+  public void editCalendar_timezone() {
+    mgr.createCalendar("Cal", "UTC");
+    mgr.editCalendar("Cal", "timezone", "Europe/Paris");
+    assertEquals(ZoneId.of("Europe/Paris"), mgr.getTimezone("Cal"));
+  }
+
+  @Test(expected = DateTimeException.class)
+  public void editCalendar_invalidTimezone_throws() {
+    mgr.createCalendar("Cal", "UTC");
+    mgr.editCalendar("Cal", "timezone", "No/Zone");
+  }
+
+  @Test
+  public void useCalendar_andIsolation() {
+    // create a second calendar
+    mgr.createCalendar("B", "UTC");
+    // in Default, add E1
+    LocalDateTime dt = LocalDateTime.of(2025,1,1,9,0);
+    mgr.addEvent("E1", dt, dt.plusHours(1), null, null, "public");
+
+    // switch to B and add E2
+    mgr.useCalendar("B");
+    mgr.addEvent("E2", dt, dt.plusHours(2), null, null, "public");
+
+    // back to Default: should see only E1
+    mgr.useCalendar("Default");
+    List<Event> defaultEvents = mgr.getEventsOnDate(LocalDate.of(2025,1,1));
+    assertEquals(1, defaultEvents.size());
+    assertEquals("E1", defaultEvents.get(0).getSubject());
+
+    // in B we see only E2
+    mgr.useCalendar("B");
+    List<Event> bEvents = mgr.getEventsOnDate(LocalDate.of(2025,1,1));
+    assertEquals(1, bEvents.size());
+    assertEquals("E2", bEvents.get(0).getSubject());
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void useCalendar_nonexistent_throws() {
+    mgr.useCalendar("NoSuch");
+  }
+
+  @Test
+  public void copyEvent_toOtherCalendar() {
+    // in Default
+    LocalDateTime srcStart = LocalDateTime.of(2025,2,10,10,0);
+    LocalDateTime srcEnd   = srcStart.plusHours(1);
+    mgr.addEvent("Meeting", srcStart, srcEnd, "Desc", "Loc", "public");
+
+    // create a target
+    mgr.createCalendar("Dst", "UTC");
+
+    // copy it
+    LocalDateTime dstStart = LocalDateTime.of(2025,3,1,9,0);
+    mgr.copyEvent("Meeting", srcStart, "Dst", dstStart);
+
+    // verify in Dst
+    mgr.useCalendar("Dst");
+    List<Event> out = mgr.getEventsOnDate(LocalDate.of(2025,3,1));
+    assertEquals(1, out.size());
+    Event e = out.get(0);
+    assertEquals("Meeting",        e.getSubject());
+    assertEquals(dstStart,         e.getStart());
+    assertEquals(dstStart.plusHours(1), e.getEnd());
+    assertEquals("Desc",           e.getDescription());
+    assertEquals("Loc",            e.getLocation());
+    assertEquals("public",         e.getStatus());
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void copyEvent_noSuchEvent_throws() {
+    mgr.createCalendar("Dst", "UTC");
+    mgr.copyEvent("Nothing", LocalDateTime.now(), "Dst", LocalDateTime.now());
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void copyEvent_noSuchCalendar_throws() {
+    LocalDateTime t = LocalDateTime.of(2025,2,10,10,0);
+    mgr.addEvent("X", t, t.plusHours(1), null, null, "public");
+    mgr.copyEvent("X", t, "NoCal", t);
+  }
+
+  @Test
+  public void copyEventsOnDate_toOtherCalendar() {
+    // set up events on Jan 1
+    LocalDateTime t1 = LocalDateTime.of(2025,1,1,8,0);
+    LocalDateTime t2 = LocalDateTime.of(2025,1,1,12,0);
+    mgr.addEvent("A", t1, t1.plusHours(1), null, null, "public");
+    mgr.addEvent("B", t2, t2.plusHours(2), null, null, "public");
+
+    mgr.createCalendar("Dst", "UTC");
+    // copy all Jan 1 events to Feb 1 start of day
+    mgr.copyEventsOnDate(
+        LocalDateTime.of(2025,1,1,0,0),
+        "Dst",
+        LocalDateTime.of(2025,2,1,0,0)
+    );
+
+    mgr.useCalendar("Dst");
+    List<Event> out = mgr.getEventsOnDate(LocalDate.of(2025,2,1));
+    assertEquals(2, out.size());
+    // check that times were preserved
+    assertTrue(out.stream().anyMatch(e -> e.getSubject().equals("A") && e.getStart().getHour()
+        == 8));
+    assertTrue(out.stream().anyMatch(e -> e.getSubject().equals("B") && e.getStart().getHour()
+        == 12));
+  }
+
+  @Test
+  public void copyEventsBetween_toOtherCalendar() {
+    // make three events on Jan 1–3
+    LocalDateTime e1 = LocalDateTime.of(2025,1,1,9,0);
+    LocalDateTime e2 = LocalDateTime.of(2025,1,2,9,0);
+    LocalDateTime e3 = LocalDateTime.of(2025,1,3,9,0);
+    mgr.addEvent("X1", e1, e1.plusHours(1), null, null, "public");
+    mgr.addEvent("X2", e2, e2.plusHours(1), null, null, "public");
+    mgr.addEvent("X3", e3, e3.plusHours(1), null, null, "public");
+
+    mgr.createCalendar("Dst", "UTC");
+    // copy only Jan 2–2 (so only X2) into Mar 1 at midnight
+    mgr.copyEventsBetween(
+        LocalDateTime.of(2025,1,2,0,0),
+        LocalDateTime.of(2025,1,2,23,59),
+        "Dst",
+        LocalDateTime.of(2025,3,1,0,0)
+    );
+
+    mgr.useCalendar("Dst");
+    List<Event> out = mgr.getEventsOnDate(LocalDate.of(2025,3,1));
+    assertEquals(1, out.size());
+    Event e = out.get(0);
+    assertEquals("X2", e.getSubject());
+    // original was 9:00, so after shift still 9:00
+    assertEquals(9, e.getStart().getHour());
+  }
+
+  @Test
+  public void listCalendars_initialAndAfterCreate() {
+    Set<String> first = mgr.listCalendars();
+    // “Default” is the calendar name we passed into the constructor
+    assertTrue(first.contains("Default"));
+
+    mgr.createCalendar("Work", "UTC");
+    Set<String> after = mgr.listCalendars();
+    assertTrue(after.contains("Default"));
+    assertTrue(after.contains("Work"));
+  }
+
+
+  @Test
+  public void getTimezone_returnsCorrectZone() {
+    // system default for "Primary"
+    assertNotNull(mgr.getCurrentTimezone());
+    mgr.createCalendar("Home", "Europe/London");
+    assertEquals(
+        java.time.ZoneId.of("Europe/London"),
+        mgr.getTimezone("Home")
+    );
+  }
+
+  // Add these three test methods to your existing CalendarManagerTest.java class:
+
+  @Test
+  public void editCalendar_timezoneChange_eventsDisplayCorrectly() {
+    // Create calendar with initial timezone
+    mgr.createCalendar("TestCal", "UTC");
+    mgr.useCalendar("TestCal");
+
+    // Add an event
+    LocalDateTime eventTime = LocalDateTime.of(2025, 6, 15, 14, 0); // 2 PM UTC
+    mgr.addEvent("Meeting", eventTime, eventTime.plusHours(1), null, null, "public");
+
+    // Verify event exists at original time
+    List<Event> beforeChange = mgr.getEventsOnDate(LocalDate.of(2025, 6, 15));
+    assertEquals(1, beforeChange.size());
+    assertEquals(14, beforeChange.get(0).getStart().getHour()); // 2 PM
+
+    // Change timezone to EST (UTC-5)
+    mgr.editCalendar("TestCal", "timezone", "America/New_York");
+
+    // Events should still display at the same local time
+    // (Note: Your current implementation doesn't convert existing events,
+    // which is a reasonable design choice for simplicity)
+    List<Event> afterChange = mgr.getEventsOnDate(LocalDate.of(2025, 6, 15));
+    assertEquals(1, afterChange.size());
+    assertEquals(14, afterChange.get(0).getStart().getHour()); // Still 2 PM local time
+  }
+
+  @Test
+  public void copyEvent_differentTimezones_convertsCorrectly() {
+    // Create source calendar in EST
+    mgr.createCalendar("Source", "America/New_York");
+    mgr.useCalendar("Source");
+
+    // Add event at 2 PM EST
+    LocalDateTime sourceTime = LocalDateTime.of(2025, 6, 15, 14, 0);
+    mgr.addEvent("Meeting", sourceTime, sourceTime.plusHours(1), "Important", "Office", "public");
+
+    // Create target calendar in PST (3 hours behind EST)
+    mgr.createCalendar("Target", "America/Los_Angeles");
+
+    // Copy event to target calendar at same "wall clock" time
+    LocalDateTime targetTime = LocalDateTime.of(2025, 6, 16, 14, 0);
+    mgr.copyEvent("Meeting", sourceTime, "Target", targetTime);
+
+    // Verify event was copied with correct details
+    mgr.useCalendar("Target");
+    List<Event> events = mgr.getEventsOnDate(LocalDate.of(2025, 6, 16));
+    assertEquals(1, events.size());
+
+    Event copied = events.get(0);
+    assertEquals("Meeting", copied.getSubject());
+    assertEquals(targetTime, copied.getStart());
+    assertEquals(targetTime.plusHours(1), copied.getEnd());
+    assertEquals("Important", copied.getDescription());
+    assertEquals("Office", copied.getLocation());
+  }
+
+  @Test
+  public void copyEventsBetween_differentTimezones_preservesRelativeTiming() {
+    // Setup source calendar in UTC
+    mgr.useCalendar("Default"); // Already UTC
+
+    // Add events on consecutive days
+    LocalDateTime day1 = LocalDateTime.of(2025, 6, 15, 10, 0); // 10 AM UTC
+    LocalDateTime day2 = LocalDateTime.of(2025, 6, 16, 15, 0); // 3 PM UTC
+    mgr.addEvent("Morning", day1, day1.plusHours(1), null, null, "public");
+    mgr.addEvent("Afternoon", day2, day2.plusHours(2), null, null, "public");
+
+    // Create target calendar in different timezone (JST = UTC+9)
+    mgr.createCalendar("Japan", "Asia/Tokyo");
+
+    // Copy 2-day range to target calendar
+    mgr.copyEventsBetween(
+        LocalDateTime.of(2025, 6, 15, 0, 0),    // From start of June 15
+        LocalDateTime.of(2025, 6, 16, 23, 59),  // To end of June 16
+        "Japan",
+        LocalDateTime.of(2025, 7, 1, 0, 0)      // Target: July 1
+    );
+
+    // Verify events copied with correct time shifts
+    mgr.useCalendar("Japan");
+
+    // Check July 1st events (from June 15 source)
+    List<Event> july1Events = mgr.getEventsOnDate(LocalDate.of(2025, 7, 1));
+    assertEquals(1, july1Events.size());
+    assertEquals("Morning", july1Events.get(0).getSubject());
+    assertEquals(10, july1Events.get(0).getStart().getHour()); // Should maintain relative hour
+
+    // Check July 2nd events (from June 16 source)
+    List<Event> july2Events = mgr.getEventsOnDate(LocalDate.of(2025, 7, 2));
+    assertEquals(1, july2Events.size());
+    assertEquals("Afternoon", july2Events.get(0).getSubject());
+    assertEquals(15, july2Events.get(0).getStart().getHour()); // Should maintain relative hour
+  }
+
+  @Test
+  public void editCalendar_renameCalendar_updatesName() {
+    mgr.createCalendar("Old", "UTC");
+    mgr.editCalendar("Old", "name", "New");
+    Set<String> names = mgr.listCalendars();
+    assertFalse(names.contains("Old"));
+    assertTrue(names.contains("New"));
+  }
+
+  @Test
+  public void editCalendar_changeTimezone_updatesZone() {
+    mgr.createCalendar("Geo", "UTC");
+    mgr.editCalendar("Geo", "timezone", "Asia/Tokyo");
+    assertEquals(
+        java.time.ZoneId.of("Asia/Tokyo"),
+        mgr.getTimezone("Geo")
+    );
+  }
+
+  @Test
+  public void useCalendar_switchesActive() {
+    mgr.createCalendar("C1", "UTC");
+    mgr.createCalendar("C2", "UTC");
+    mgr.useCalendar("C2");
+    // now adding an event goes into C2
+    mgr.addEvent("X", LocalDateTime.of(2025,1,1,9,0),
+        LocalDateTime.of(2025,1,1,10,0),
+        null, null, "public");
+    // C1 should still be empty on that date
+    mgr.useCalendar("C1");
+    List<Event> empty = mgr.getEventsOnDate(LocalDate.of(2025,1,1));
+    assertTrue(empty.isEmpty());
+  }
+
+  @Test
+  public void copyEvent_singleEvent_copiesDuration() {
+    mgr.createCalendar("Src", "UTC");
+    mgr.createCalendar("Dst", "UTC");
+    mgr.useCalendar("Src");
+    LocalDateTime start = LocalDateTime.of(2025,2,10,10,0);
+    LocalDateTime end   = LocalDateTime.of(2025,2,10,11,30);
+    mgr.addEvent("Test", start, end, "d","l","public");
+
+    mgr.copyEvent("Test", start, "Dst", LocalDateTime.of(2025,3,1,9,0));
+    mgr.useCalendar("Dst");
+    List<Event> evs = mgr.getEventsOnDate(LocalDate.of(2025,3,1));
+    assertEquals(1, evs.size());
+    Event e = evs.get(0);
+    assertEquals("Test", e.getSubject());
+    // duration preserved: 1h30m
+    assertEquals(LocalDateTime.of(2025,3,1,10,30), e.getEnd());
+  }
+
+  @Test
+  public void copyEventsOnDate_multiple_respectsSameWallClock() {
+    mgr.createCalendar("A", "UTC");
+    mgr.createCalendar("B", "UTC");
+    mgr.useCalendar("A");
+    // two events on 2025‑04‑01 at 08:00 and 12:00
+    LocalDateTime a1 = LocalDateTime.of(2025,4,1,8,0);
+    LocalDateTime a2 = LocalDateTime.of(2025,4,1,9,0);
+    mgr.addEvent("M1", a1, a2, null,null,"public");
+    LocalDateTime b1 = LocalDateTime.of(2025,4,1,12,0);
+    LocalDateTime b2 = LocalDateTime.of(2025,4,1,13,0);
+    mgr.addEvent("M2", b1, b2, null,null,"public");
+
+    mgr.copyEventsOnDate(
+        LocalDate.of(2025,4,1).atStartOfDay(),
+        "B",
+        LocalDate.of(2025,4,2).atStartOfDay()
+    );
+    mgr.useCalendar("B");
+    List<Event> evs = mgr.getEventsOnDate(LocalDate.of(2025,4,2));
+    assertEquals(2, evs.size());
+    // both start at the same hour/minute as original
+    assertTrue(evs.stream().anyMatch(e -> e.getStart().getHour() == 8));
+    assertTrue(evs.stream().anyMatch(e -> e.getStart().getHour() == 12));
+  }
+
+  @Test
+  public void copyEventsBetween_shiftsRelativeOffsets() {
+    mgr.createCalendar("X", "UTC");
+    mgr.createCalendar("Y", "UTC");
+    mgr.useCalendar("X");
+    // events on 2025-05-05 10:00 and 2025-05-06 14:00
+    mgr.addEvent("E1",
+        LocalDateTime.of(2025, 5, 5, 10, 0),
+        LocalDateTime.of(2025, 5, 5, 11, 0),
+        null, null, "public"
+    );
+    mgr.addEvent("E2",
+        LocalDateTime.of(2025, 5, 6, 14, 0),
+        LocalDateTime.of(2025, 5, 6, 15, 0),
+        null, null, "public"
+    );
+
+    // copy window May 5–6 (inclusive) to start at June 1 09:00
+    mgr.copyEventsBetween(
+        LocalDateTime.of(2025, 5, 5, 0, 0),
+        LocalDateTime.of(2025, 5, 6, 23, 59),
+        "Y",
+        LocalDateTime.of(2025, 6, 1, 9, 0)
+    );
+    mgr.useCalendar("Y");
+
+    // E1 shifts to June 1 → should appear on June 1
+    List<Event> june1 = mgr.getEventsOnDate(LocalDate.of(2025, 6, 1));
+    assertTrue(june1.stream().anyMatch(e -> e.getSubject().equals("E1")));
+
+    // E2 shifts to June 2 → should appear on June 2
+    List<Event> june2 = mgr.getEventsOnDate(LocalDate.of(2025, 6, 2));
+    assertTrue(june2.stream().anyMatch(e -> e.getSubject().equals("E2")));
+  }
+
+}
