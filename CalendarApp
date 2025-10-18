@@ -1,0 +1,107 @@
+package calendar;
+
+import calendar.controller.CalendarController;
+import calendar.model.CalendarManager;
+import calendar.view.CalendarView;
+import calendar.view.CalendarGUI;
+
+import java.time.ZoneId;
+
+/**
+ * Main application entry point supporting three operational modes for the calendar application.
+ * This class serves as the application launcher and provides three different user interfaces:
+ * GUI mode (default), interactive text mode, and headless script mode. The application
+ * automatically creates a default calendar and controller, then launches the appropriate
+ * interface based on command line arguments.
+ * Supported command line formats:
+ * - java -jar Program.jar (GUI mode)
+ * - java -jar Program.jar --mode interactive (text-based interactive mode)
+ * - java -jar Program.jar --mode headless filename (batch script processing)
+ */
+public class CalendarApp {
+
+  /**
+   * Main application entry point that parses arguments and launches the appropriate interface.
+   * Creates a CalendarManager with a default calendar, initializes the controller,
+   * and starts either the GUI or text-based interface depending on command line arguments.
+   * The default calendar uses the system timezone and is automatically activated.
+   * Command line argument patterns:
+   * - No arguments: Launch GUI mode
+   * - --mode interactive: Launch interactive text interface
+   * - --mode headless filename: Process commands from specified file
+   *
+   * @param args command-line arguments determining the interface mode
+   */
+  public static void main(String[] args) {
+    // Initialize the calendar system with default calendar
+    CalendarManager manager = new CalendarManager("Default", ZoneId.systemDefault());
+
+    // Ensure the default calendar is active (should already be, but verify)
+    try {
+      manager.useCalendar("Default");
+    } catch (Exception e) {
+      // Default calendar should already be active, but handle any edge cases
+      System.err.println("Note: " + e.getMessage());
+    }
+
+    // Create controller to handle all calendar operations
+    CalendarController controller = new CalendarController(manager);
+
+    // Determine interface mode based on command line arguments
+    if (args.length == 0) {
+      // Default mode: launch GUI interface
+      startGUI(controller);
+    } else if (args.length >= 2 && args[0].equalsIgnoreCase("--mode")) {
+      String mode = args[1].toLowerCase();
+
+      if (mode.equals("interactive")) {
+        // Interactive text mode with command prompt
+        CalendarView view = new CalendarView(controller, true, null);
+        view.start();
+      } else if (mode.equals("headless") && args.length >= 3) {
+        // Headless script mode reading from file
+        CalendarView view = new CalendarView(controller, false, args[2]);
+        view.start();
+      } else {
+        // Invalid mode or missing filename for headless mode
+        printUsage();
+      }
+    } else {
+      // Invalid argument format
+      printUsage();
+    }
+  }
+
+  /**
+   * Launches the graphical user interface on the Event Dispatch Thread.
+   * Creates and starts the Swing GUI interface using SwingUtilities.invokeLater
+   * to ensure proper thread safety. Handles any exceptions that occur during
+   * GUI initialization and provides error feedback.
+   *
+   * @param controller the CalendarController to use for calendar operations
+   */
+  private static void startGUI(CalendarController controller) {
+    try {
+      // Launch GUI on the Event Dispatch Thread for thread safety
+      javax.swing.SwingUtilities.invokeLater(() -> {
+        CalendarGUI gui = new CalendarGUI(controller);
+        gui.start();
+      });
+    } catch (Exception e) {
+      System.err.println("Error starting GUI: " + e.getMessage());
+      e.printStackTrace();
+    }
+  }
+
+  /**
+   * Displays usage information for valid command line argument formats.
+   * Called when invalid arguments are provided to help users understand
+   * the correct syntax for launching the application in different modes.
+   */
+  private static void printUsage() {
+    System.out.println("Invalid arguments. Valid options:");
+    System.out.println("  java -jar Program.jar");
+    System.out.println("  java -jar Program.jar --mode interactive");
+    System.out.println("  java -jar Program.jar --mode headless <filename>");
+  }
+}
