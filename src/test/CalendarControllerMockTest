@@ -1,0 +1,144 @@
+import calendar.controller.CalendarController;
+import calendar.model.CalendarManager;
+import calendar.model.Event;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Collections;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
+/**
+ * Unit tests for CalendarController using a spy pattern to verify command delegation and parsing.
+ * This test suite focuses on verifying that the CalendarController correctly parses commands
+ * and delegates operations to the CalendarManager without relying on the full manager
+ * implementation. Uses a custom SpyManager that extends CalendarManager to capture
+ * method calls and verify parameter passing.
+ * Key test areas include:
+ * - Command parsing accuracy for all supported operations
+ * - Parameter extraction and type conversion from command strings
+ * - Proper delegation to CalendarManager methods with correct arguments
+ * - Response message formatting and consistency
+ * - Error handling for malformed commands
+ * - Isolation of controller logic from manager implementation details
+ * The spy pattern allows verification of the controller's behavior without depending
+ * on the complete calendar model implementation, making these tests faster and more
+ * focused on the command-parsing logic specifically.
+ */
+public class CalendarControllerMockTest {
+
+  private SpyManager spy;
+  private CalendarController controller;
+
+  static class SpyManager extends CalendarManager {
+    boolean createCalendarCalled;
+    String createdName;
+    String createdTz;
+
+    boolean useCalendarCalled;
+    String usedName;
+
+    boolean getEventsOnDateCalled;
+    LocalDate eventsOnDateArg;
+
+    boolean copyEventCalled;
+    String copySubject;
+    String copyTarget;
+    LocalDateTime copySrc;
+    LocalDateTime copyDest;
+
+    SpyManager() {
+      super("Default", "UTC");
+    }
+
+    @Override
+    public void createCalendar(String name, String tzId) {
+      createCalendarCalled = true;
+      createdName = name;
+      createdTz = tzId;
+    }
+
+    @Override
+    public void useCalendar(String name) {
+      useCalendarCalled = true;
+      usedName = name;
+    }
+
+    @Override
+    public java.util.List<Event> getEventsOnDate(LocalDate date) {
+      getEventsOnDateCalled = true;
+      eventsOnDateArg = date;
+      return Collections.emptyList();
+    }
+
+    @Override
+    public void copyEvent(String subject,
+                          LocalDateTime srcStart,
+                          String targetCalendar,
+                          LocalDateTime destStart) {
+      copyEventCalled = true;
+      copySubject = subject;
+      copySrc = srcStart;
+      copyTarget = targetCalendar;
+      copyDest = destStart;
+    }
+  }
+
+  @Before
+  public void setUp() {
+    spy = new SpyManager();
+    controller = new CalendarController(spy);
+  }
+
+  @Test
+  public void createCalendarCommand_callsManager_andReturnsMessage() {
+    String resp = controller.handleCommand("create calendar --name Work --timezone PST");
+    assertTrue(spy.createCalendarCalled);
+    assertEquals("Work", spy.createdName);
+    assertEquals("PST", spy.createdTz);
+    assertEquals("Calendar created: Work", resp);
+  }
+
+  @Test
+  public void useCalendarCommand_callsManager_andReturnsMessage() {
+    String resp = controller.handleCommand("use calendar --name Personal");
+    assertTrue(spy.useCalendarCalled);
+    assertEquals("Personal", spy.usedName);
+    assertEquals("Using calendar: Personal", resp);
+  }
+
+  @Test
+  public void printEventsOnDate_delegatesAndHandlesEmpty() {
+    String resp = controller.handleCommand("print events on 2025-05-20");
+    assertTrue(spy.getEventsOnDateCalled);
+    assertEquals(LocalDate.of(2025,5,20), spy.eventsOnDateArg);
+    assertEquals("No events on this date.", resp);
+  }
+
+  @Test
+  public void copyEventCommand_parsesAndDelegatesCorrectly() {
+    String cmd = "copy event Meeting on 2025-12-01T09:00 --target Work to 2025-12-01T10:30";
+    String resp = controller.handleCommand(cmd);
+    assertTrue(spy.copyEventCalled);
+    assertEquals("Meeting", spy.copySubject);
+    assertEquals(LocalDateTime.of(2025,12,1,9,0), spy.copySrc);
+    assertEquals("Work", spy.copyTarget);
+    assertEquals(LocalDateTime.of(2025,12,1,10,30), spy.copyDest);
+    assertEquals("Event copied: Meeting → Work", resp);
+  }
+
+  @Test
+  public void unknownVerb_returnsErrorSuggestion() {
+    String resp = controller.handleCommand("foobar");
+    assertTrue(resp.contains("Unknown command"));
+  }
+
+  @Test
+  public void invalidSyntax_reportsError() {
+    String resp = controller.handleCommand("create foo");
+    assertTrue(resp.contains("Invalid create"));
+  }
+}
