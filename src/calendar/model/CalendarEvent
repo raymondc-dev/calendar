@@ -1,0 +1,287 @@
+package calendar.model;
+
+import java.time.LocalDateTime;
+import java.util.Objects;
+import java.util.UUID;
+
+/**
+ * A mutable calendar event implementation supporting both standalone and recurring series events.
+ * This class represents a single calendar event with full property support including subject,
+ * timing, description, location, and visibility status. Events can be part of a recurring
+ * series (identified by seriesId) or standalone occurrences. Each event has a unique identifier
+ * for internal tracking while using subject+start+end for logical equality comparisons.
+ * Events are mutable to support editing operations, with validation ensuring data integrity.
+ * All-day events are represented by setting the end time to null. Time validation ensures
+ * that end times are never before start times.
+ */
+public class CalendarEvent implements Event {
+
+  // Unique identifier for this specific event instance
+  private final String id = UUID.randomUUID().toString();
+
+  // Event title/subject - cannot be null
+  private String subject;
+
+  // Event start date and time - cannot be null
+  private LocalDateTime start;
+
+  // Event end date and time - null indicates all-day event
+  private LocalDateTime end;
+
+  // Optional detailed description of the event
+  private String description;
+
+  // Optional location where the event takes place
+  private String location;
+
+  // Visibility status: "public" or "private"
+  private String status;
+
+  // Series identifier if this event is part of a recurring series, null otherwise.
+  private final String seriesId;
+
+  /**
+   * Creates a new standalone (non-recurring) calendar event.
+   * Initializes all event properties with validation to ensure data integrity.
+   * The event will not be associated with any recurring series.
+   *
+   * @param subject     non-null event title/subject
+   * @param start       non-null start date and time
+   * @param end         end date and time (null for all-day events)
+   * @param description optional detailed description (nullable)
+   * @param location    optional location information (nullable)
+   * @param status      visibility status ("public" or "private")
+   * @throws NullPointerException     if subject or start are null
+   * @throws IllegalArgumentException if end time is before start time
+   */
+  public CalendarEvent(
+      String subject,
+      LocalDateTime start,
+      LocalDateTime end,
+      String description,
+      String location,
+      String status
+  ) {
+    this.subject = Objects.requireNonNull(subject, "subject cannot be null");
+    this.start = Objects.requireNonNull(start, "start cannot be null");
+    this.end = end;
+    this.description = description;
+    this.location = location;
+    this.status = status;
+    this.seriesId = null; // Not part of a recurring series
+    validateTimes();
+  }
+
+  /**
+   * Creates a new calendar event as part of a recurring series.
+   * This constructor is used when generating events for recurring series.
+   * The seriesId links this event to other occurrences in the same series,
+   * enabling series-wide operations like editing or deletion.
+   *
+   * @param subject     non-null event title/subject
+   * @param start       non-null start date and time
+   * @param end         end date and time (null for all-day events)
+   * @param description optional detailed description (nullable)
+   * @param location    optional location information (nullable)
+   * @param status      visibility status ("public" or "private")
+   * @param seriesId    non-null identifier linking this event to its recurring series
+   * @throws NullPointerException     if subject, start, or seriesId are null
+   * @throws IllegalArgumentException if end time is before start time
+   */
+  public CalendarEvent(
+      String subject,
+      LocalDateTime start,
+      LocalDateTime end,
+      String description,
+      String location,
+      String status,
+      String seriesId
+  ) {
+    this.subject = Objects.requireNonNull(subject, "subject cannot be null");
+    this.start = Objects.requireNonNull(start, "start cannot be null");
+    this.end = end;
+    this.description = description;
+    this.location = location;
+    this.status = status;
+    this.seriesId = Objects.requireNonNull(seriesId, "seriesId cannot be null");
+    validateTimes();
+  }
+
+  /**
+   * Validates that the end time is not before the start time.
+   * This internal method ensures temporal consistency whenever times are set or modified.
+   * The error message is specifically formatted to match test expectations.
+   *
+   * @throws IllegalArgumentException if end time is before start time
+   */
+  private void validateTimes() {
+    if (end != null && end.isBefore(start)) {
+      throw new IllegalArgumentException("End time must be ≥ start time");
+    }
+  }
+
+  @Override
+  public String getSubject() {
+    return subject;
+  }
+
+  @Override
+  public LocalDateTime getStart() {
+    return start;
+  }
+
+  @Override
+  public LocalDateTime getEnd() {
+    return end;
+  }
+
+  @Override
+  public String getDescription() {
+    return description;
+  }
+
+  @Override
+  public String getLocation() {
+    return location;
+  }
+
+  @Override
+  public String getStatus() {
+    return status;
+  }
+
+  /**
+   * Returns the unique identifier for this specific event instance.
+   * This ID is used internally for tracking and differentiating between events
+   * that might otherwise appear identical (e.g., in recurring series).
+   *
+   * @return unique UUID string for this event
+   */
+  public String getId() {
+    return id;
+  }
+
+  /**
+   * Returns the series identifier if this event is part of a recurring series.
+   * Events in the same recurring series share the same seriesId, enabling
+   * operations that affect multiple related events simultaneously.
+   *
+   * @return series ID string if part of a recurring series, null if standalone event
+   */
+  public String getSeriesId() {
+    return seriesId;
+  }
+
+  /**
+   * Updates the event subject with validation.
+   *
+   * @param subject new non-null subject text
+   * @throws NullPointerException if subject is null
+   */
+  public void setSubject(String subject) {
+    this.subject = Objects.requireNonNull(subject, "subject cannot be null");
+  }
+
+  /**
+   * Updates the event start time with validation.
+   * Automatically validates that the new start time doesn't create
+   * an invalid time relationship with the current end time.
+   *
+   * @param start new non-null start date and time
+   * @throws NullPointerException     if start is null
+   * @throws IllegalArgumentException if start is after current end time
+   */
+  public void setStart(LocalDateTime start) {
+    this.start = Objects.requireNonNull(start, "start cannot be null");
+    validateTimes();
+  }
+
+  /**
+   * Updates the event end time with validation.
+   * Automatically validates that the new end time doesn't create
+   * an invalid time relationship with the current start time.
+   * Setting to null creates an all-day event.
+   *
+   * @param end new end date and time (null for all-day events)
+   * @throws IllegalArgumentException if end is before current start time
+   */
+  public void setEnd(LocalDateTime end) {
+    this.end = end;
+    validateTimes();
+  }
+
+  /**
+   * Updates the event description.
+   *
+   * @param description new description text (nullable)
+   */
+  public void setDescription(String description) {
+    this.description = description;
+  }
+
+  /**
+   * Updates the event location.
+   *
+   * @param location new location text (nullable)
+   */
+  public void setLocation(String location) {
+    this.location = location;
+  }
+
+  /**
+   * Updates the event visibility status.
+   *
+   * @param status new status ("public" or "private")
+   */
+  public void setStatus(String status) {
+    this.status = status;
+  }
+
+  /**
+   * Compares events based on their logical identity (subject, start, and end times).
+   * Two events are considered equal if they have the same subject, start time,
+   * and end time, regardless of their internal IDs or other properties.
+   * This enables duplicate detection and event lookup operations.
+   *
+   * @param o object to compare with this event
+   * @return true if the objects represent the same logical event
+   */
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (!(o instanceof CalendarEvent)) {
+      return false;
+    }
+    CalendarEvent other = (CalendarEvent) o;
+    return subject.equals(other.subject)
+        && start.equals(other.start)
+        && Objects.equals(end, other.end);
+  }
+
+  /**
+   * Generates hash code based on the logical identity properties.
+   * Consistent with equals(), uses subject, start, and end times
+   * to generate the hash code for efficient storage in collections.
+   *
+   * @return hash code based on subject, start, and end times
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(subject, start, end);
+  }
+
+  /**
+   * Provides a human-readable string representation of the event.
+   * Format: "Subject | StartTime → EndTime" where EndTime shows "(all-day)"
+   * for events without an explicit end time.
+   *
+   * @return formatted string representation of the event
+   */
+  @Override
+  public String toString() {
+    String endStr = (end == null ? "(all-day)" : end.toString());
+    return subject + " | " + start + " → " + endStr;
+  }
+}
